@@ -1,0 +1,108 @@
+version: '3.0'
+
+services:
+
+  http:
+    build: images/php-apache/
+    container_name: rpm-http
+    restart: always
+    ports:
+      - 8091:80
+    volumes:
+      - ../web/:/var/www/html
+      - ./configs/web/.env:/var/www/html/.env
+    command: >
+        bash -c "composer install &&
+                npm install &&
+                apache2-foreground"
+
+    depends_on:
+      - rabbitmq
+      - postgress
+      - mongo
+
+  rpm-processor:
+    build: images/php-cli/
+    # static names are not supported when using --scale
+    # and couldn't find a way to generate container name based on the scale number
+    # while docker has no problems generating container names that include build_$(name)_$id
+    # so that why build name is changed from "processor" to "rpm-processor", to make it easier to identify
+    # containers by name and not the image name
+    # container_name: rpm-processor
+    restart: always
+    volumes:
+      - ../web/:/reddit-posts-mirror
+      - ./configs/web/.env:/reddit-posts-mirror/.env
+    working_dir: /reddit-posts-mirror
+    depends_on:
+      - rabbitmq
+      - postgress
+
+    command: >
+        bash -c "composer install &&
+                npm install &&
+                php bin/console messenger:consume amqp_processor"
+
+  notifier:
+    build: images/node/
+    container_name: rpm-notifier
+    restart: always
+    ports:
+      - 9091:9091
+
+    working_dir: /reddit-posts-mirror
+    volumes:
+      - ../notifier/:/reddit-posts-mirror
+      - ./configs/notifier/config.js:/reddit-posts-mirror/config.js
+    depends_on:
+      - rabbitmq
+      - mongo
+
+    command: npm start
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rpm-rabbitmq
+    restart: always
+    ports:
+      - 5672:5672
+      - 15672:15672
+
+  postgress:
+    image: postgres
+    container_name: rpm-postgres
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: password
+
+  pgadmin:
+    image: fenglc/pgadmin4
+    container_name: rpm-pgadmin
+    ports:
+      - 5050:5050
+    links:
+      - postgress
+
+  mongo:
+    image: mongo
+    container_name: rpm-mongo
+    restart: always
+    ports:
+      - 27017:27017
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: password
+
+  mongo-express:
+    image: mongo-express
+    container_name: rpm-mongo-express
+    restart: always
+    ports:
+      - 5052:8081
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: root
+      ME_CONFIG_MONGODB_ADMINPASSWORD: password
+    links:
+      - mongo
+    depends_on:
+      - mongo
